@@ -8,8 +8,8 @@ public sealed class LzGame : Game
 {
     private const int TileWidth = 64;
     private const int TileHeight = 32;
-    private const int MapWidth = 30;
-    private const int MapHeight = 30;
+    private const int MapWidth = 60;
+    private const int MapHeight = 60;
     private const int HudHeight = 142;
 
     private readonly GraphicsDeviceManager graphics;
@@ -22,6 +22,7 @@ public sealed class LzGame : Game
     private readonly TileKind[,] map = new TileKind[MapWidth, MapHeight];
     private Vector2 playerTile = new(7, 7);
     private Vector2 targetTile = new(7, 7);
+    private Vector2 cameraOffset;
     private Point? hoverTile;
 
     public LzGame()
@@ -40,6 +41,7 @@ public sealed class LzGame : Game
     protected override void Initialize()
     {
         GenerateMap();
+        CenterCameraImmediately();
         base.Initialize();
     }
 
@@ -63,7 +65,9 @@ public sealed class LzGame : Game
         var mouse = Mouse.GetState();
         hoverTile = ScreenToTile(mouse.Position);
 
-        if (mouse.LeftButton == ButtonState.Pressed && previousMouse.LeftButton == ButtonState.Released && mouse.Y < GraphicsDevice.Viewport.Height - HudHeight)
+        if (mouse.LeftButton == ButtonState.Pressed &&
+            previousMouse.LeftButton == ButtonState.Released &&
+            mouse.Y < GraphicsDevice.Viewport.Height - HudHeight)
         {
             var clicked = ScreenToTile(mouse.Position);
             if (clicked.HasValue)
@@ -72,7 +76,10 @@ public sealed class LzGame : Game
             }
         }
 
-        MovePlayer((float)gameTime.ElapsedGameTime.TotalSeconds);
+        var dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+        MovePlayer(dt);
+        UpdateCamera(dt);
+
         previousMouse = mouse;
         base.Update(gameTime);
     }
@@ -101,9 +108,11 @@ public sealed class LzGame : Game
             for (var x = 0; x < MapWidth; x++)
             {
                 var edge = x == 0 || y == 0 || x == MapWidth - 1 || y == MapHeight - 1;
-                var path = Math.Abs(x - y) <= 1 || y == 20 || x == 10;
-                var clearing = x is > 5 and < 14 && y is > 11 and < 19;
-                var forest = x + y > 38 || x < 4 || y < 4;
+                var path = Math.Abs(x - y) <= 1 || y == 20 || x == 10 || y == 42 || x == 38;
+                var clearing = (x is > 5 and < 14 && y is > 11 and < 19) ||
+                               (x is > 31 and < 43 && y is > 35 and < 46);
+                var forest = x + y > 78 || x < 4 || y < 4 ||
+                             ((x * 13 + y * 7) % 29 < 4 && !path && !clearing);
 
                 map[x, y] = edge ? TileKind.Fence : forest ? TileKind.Forest : clearing ? TileKind.Sand : path ? TileKind.Path : TileKind.Grass;
             }
@@ -127,9 +136,29 @@ public sealed class LzGame : Game
             return;
         }
 
-        var speed = 3.8f;
+        const float speed = 3.8f;
         var step = Vector2.Normalize(delta) * speed * dt;
         playerTile = step.LengthSquared() >= delta.LengthSquared() ? targetTile : playerTile + step;
+    }
+
+    private void CenterCameraImmediately()
+    {
+        cameraOffset = GetDesiredCameraOffset();
+    }
+
+    private void UpdateCamera(float dt)
+    {
+        var desired = GetDesiredCameraOffset();
+        var smoothing = 1f - MathF.Exp(-7f * dt);
+        cameraOffset = Vector2.Lerp(cameraOffset, desired, smoothing);
+    }
+
+    private Vector2 GetDesiredCameraOffset()
+    {
+        var visibleWorldHeight = Math.Max(1, GraphicsDevice.Viewport.Height - HudHeight);
+        var focusPoint = new Vector2(GraphicsDevice.Viewport.Width / 2f, visibleWorldHeight / 2f + 24f);
+        var playerScreenWithoutCamera = TileToScreen(playerTile.X, playerTile.Y, BaseWorldOrigin) + new Vector2(TileWidth / 2f, TileHeight / 2f);
+        return focusPoint - playerScreenWithoutCamera;
     }
 
     private void DrawWorld(SpriteBatch batch, Texture2D one, Texture2D tile, Texture2D hover)
@@ -144,6 +173,12 @@ public sealed class LzGame : Game
                 if (y < 0 || y >= MapHeight) continue;
 
                 var pos = TileToScreen(x, y, origin);
+                if (pos.X < -180 || pos.X > GraphicsDevice.Viewport.Width + 180 ||
+                    pos.Y < -180 || pos.Y > GraphicsDevice.Viewport.Height - HudHeight + 180)
+                {
+                    continue;
+                }
+
                 DrawTile(batch, one, tile, pos, map[x, y]);
 
                 if ((x + y) % 11 == 0 && map[x, y] == TileKind.Grass)
@@ -289,12 +324,13 @@ public sealed class LzGame : Game
         return ix >= 0 && iy >= 0 && ix < MapWidth && iy < MapHeight ? new Point(ix, iy) : null;
     }
 
-    private Vector2 TileToScreen(float x, float y, Vector2 origin)
+    private static Vector2 TileToScreen(float x, float y, Vector2 origin)
     {
         return origin + new Vector2((x - y) * TileWidth / 2f, (x + y) * TileHeight / 2f);
     }
 
-    private Vector2 WorldOrigin => new(GraphicsDevice.Viewport.Width / 2f - TileWidth / 2f, 38);
+    private Vector2 BaseWorldOrigin => new(GraphicsDevice.Viewport.Width / 2f - TileWidth / 2f, 38);
+    private Vector2 WorldOrigin => BaseWorldOrigin + cameraOffset;
 
     private static void Fill(SpriteBatch batch, Texture2D texture, float x, float y, float w, float h, Color color)
     {
