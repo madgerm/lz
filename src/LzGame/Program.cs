@@ -1,2 +1,2 @@
-using var game = new LzGame.LzGame();
+using var game = new LzGame.AssetGame();
 game.Run();
